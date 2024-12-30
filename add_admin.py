@@ -1,11 +1,13 @@
 import sqlite3
 from adafruit_fingerprint import Adafruit_Fingerprint
+import serial
 
-# Initialize the fingerprint sensor
-finger = Adafruit_Fingerprint()  # Make sure you initialize it with the correct parameters
+# Initialize the serial connection
+uart = serial.Serial("/dev/ttyS1", baudrate=57600, timeout=1)
+finger = Adafruit_Fingerprint(uart)  # Initialize with the serial connection
 
 # Function to enroll the fingerprint
-def enroll_fingerprint(finger):
+def enroll_fingerprint():
     for attempt in range(1, 3):
         print(f"Attempt {attempt}: Place your finger on the sensor...")
         while True:
@@ -68,7 +70,7 @@ def main():
     pin = input("Enter admin's PIN: ")
 
     # Enroll fingerprint
-    slot = enroll_fingerprint(finger)
+    slot = enroll_fingerprint()
     if slot:
         # Add admin to the database
         add_admin_to_db(first_name, last_name, pin, slot)
