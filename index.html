@@ -152,8 +152,8 @@
 						const userSelect = document.getElementById("user_name");
 						users.forEach((user) => {
 							const option = document.createElement("option");
-							option.value = user.name;
-							option.textContent = user.name;
+							option.value = `${user.first_name} ${user.last_name}`;
+							option.textContent = `${user.first_name} ${user.last_name}`;
 							userSelect.appendChild(option);
 						});
 					})
@@ -184,7 +184,7 @@
 
 				if (!data.data || data.data.length === 0) {
 					tableBody.innerHTML =
-						'<tr><td colspan="3">No records found.</td></tr>';
+						'<tr><td colspan="4">No records found.</td></tr>';
 					updatePaginationControls(data.page || 1, perPage, 0);
 					return;
 				}
@@ -193,7 +193,7 @@
 					const rowClass =
 						record.type === "time-in" ? "time-in" : "time-out";
 					const row = `<tr class="${rowClass}">
-						<td>${record.name}</td>
+						<td>${record.first_name} ${record.last_name}</td>
 						<td>${formatTimestamp(record.timestamp)}</td>
 						<td>${record.type}</td>
 					</tr>`;
@@ -298,7 +298,7 @@
 					</thead>
 					<tbody id="attendance_table">
 						<tr>
-							<td colspan="3">No records found.</td>
+							<td colspan="4">No records found.</td>
 						</tr>
 					</tbody>
 				</table>
