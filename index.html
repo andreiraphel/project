@@ -1,0 +1,331 @@
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Attendance Viewer</title>
+		<style>
+			/* Styling remains unchanged */
+			body {
+				font-family: "Arial", sans-serif;
+				background-color: #f4f7f9;
+				color: #333;
+				margin: 0;
+				padding: 20px;
+			}
+			.container {
+				max-width: 1200px;
+				margin: auto;
+				padding: 20px;
+				background: #fff;
+				border-radius: 10px;
+				box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+			}
+			h1 {
+				text-align: center;
+				font-size: 2em;
+				color: #4a90e2;
+			}
+			.filters {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 20px;
+				flex-wrap: wrap;
+			}
+			.filters label {
+				margin-right: 10px;
+				font-weight: bold;
+			}
+			.filters input,
+			.filters select,
+			.filters button {
+				padding: 10px;
+				margin: 5px;
+				border: 1px solid #ccc;
+				border-radius: 5px;
+				font-size: 1em;
+			}
+			input[type="number"] {
+				width: 70px;
+				height: 36px;
+				text-align: center;
+				border: 1px solid #ccc;
+				border-radius: 5px;
+				font-size: 1em;
+			}
+			.filters button {
+				background: #4a90e2;
+				color: #fff;
+				cursor: pointer;
+			}
+			.filters button:hover {
+				background: #357abd;
+			}
+			.table-container {
+				overflow-x: auto;
+			}
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				margin-top: 20px;
+			}
+			table,
+			th,
+			td {
+				border: 1px solid #ddd;
+			}
+			th,
+			td {
+				padding: 12px;
+				text-align: left;
+			}
+			th {
+				background-color: #f4f4f4;
+			}
+			.time-in {
+				background-color: #d4edda;
+				color: #155724;
+			}
+			.time-out {
+				background-color: #f8d7da;
+				color: #721c24;
+			}
+			.last-refreshed {
+				text-align: right;
+				font-size: 0.9em;
+				color: #555;
+			}
+			.pagination {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-top: 20px;
+			}
+			.pagination-info {
+				text-align: right;
+				flex: 1;
+				font-size: 1em;
+			}
+			.pagination-controls {
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				gap: 10px;
+			}
+			.pagination-controls button {
+				padding: 10px;
+				border: none;
+				background: #4a90e2;
+				color: #fff;
+				cursor: pointer;
+				border-radius: 5px;
+			}
+			.pagination-controls button:disabled {
+				background: #ccc;
+				cursor: not-allowed;
+			}
+		</style>
+		<script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+		<script>
+			const socket = io(); // Connect to WebSocket server
+
+			// Utility to get today's and tomorrow's dates in YYYY-MM-DD format
+			function getToday() {
+				const today = new Date();
+				return today.toISOString().split("T")[0];
+			}
+
+			function getTomorrow() {
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				return tomorrow.toISOString().split("T")[0];
+			}
+
+			let currentPage = 1;
+			let totalPages = 0;
+			const perPage = 10;
+
+			function fetchUsers() {
+				fetch("/get_users")
+					.then((response) => response.json())
+					.then((users) => {
+						const userSelect = document.getElementById("user_name");
+						users.forEach((user) => {
+							const option = document.createElement("option");
+							option.value = user.name;
+							option.textContent = user.name;
+							userSelect.appendChild(option);
+						});
+					})
+					.catch((error) =>
+						console.error("Error fetching users:", error)
+					);
+			}
+
+			function fetchAttendance(page = 1) {
+				const startDate = document.getElementById("start_date").value;
+				const endDate = document.getElementById("end_date").value;
+				const userName = document.getElementById("user_name").value;
+
+				// Emit a WebSocket request to fetch attendance
+				socket.emit("fetch_attendance", {
+					start_date: startDate,
+					end_date: endDate,
+					user_name: userName || null, // Send null if no user is selected
+					page,
+					per_page: perPage,
+				});
+			}
+
+			// Listen for attendance data updates from the server
+			socket.on("attendance_update", (data) => {
+				const tableBody = document.getElementById("attendance_table");
+				tableBody.innerHTML = "";
+
+				if (!data.data || data.data.length === 0) {
+					tableBody.innerHTML =
+						'<tr><td colspan="3">No records found.</td></tr>';
+					updatePaginationControls(data.page || 1, perPage, 0);
+					return;
+				}
+
+				data.data.forEach((record) => {
+					const rowClass =
+						record.type === "time-in" ? "time-in" : "time-out";
+					const row = `<tr class="${rowClass}">
+						<td>${record.name}</td>
+						<td>${formatTimestamp(record.timestamp)}</td>
+						<td>${record.type}</td>
+					</tr>`;
+					tableBody.innerHTML += row;
+				});
+
+				// Update the last refreshed time and pagination controls
+				updateLastRefreshed(data.last_refreshed);
+				updatePaginationControls(
+					data.page,
+					data.per_page,
+					data.total_records
+				);
+			});
+
+			function formatTimestamp(timestamp) {
+				const options = {
+					year: "numeric",
+					month: "short",
+					day: "numeric",
+					hour: "2-digit",
+					minute: "2-digit",
+					second: "2-digit",
+				};
+				return new Date(timestamp).toLocaleString("en-US", options);
+			}
+
+			function updateLastRefreshed(lastRefreshed) {
+				const refreshedTime = new Date(lastRefreshed);
+				document.getElementById(
+					"last_refreshed"
+				).textContent = `Last Refreshed: ${formatTimestamp(
+					refreshedTime
+				)}`;
+			}
+
+			function updatePaginationControls(page, perPage, totalRecords) {
+				currentPage = page;
+				totalPages = Math.ceil(totalRecords / perPage);
+
+				document.getElementById("prev_page").disabled = page <= 1;
+				document.getElementById("next_page").disabled =
+					page >= totalPages;
+
+				document.getElementById(
+					"pagination_info"
+				).textContent = `Found ${totalRecords} results | Page ${page} of ${totalPages}`;
+			}
+
+			function handleJump(event) {
+				if (event.key === "Enter") {
+					const jumpPage = parseInt(
+						document.getElementById("jump_page").value
+					);
+					if (jumpPage >= 1 && jumpPage <= totalPages) {
+						fetchAttendance(jumpPage);
+					} else {
+						alert("Invalid page number.");
+					}
+				}
+			}
+
+			// Set default dates and fetch initial data
+			window.onload = () => {
+				const startDateField = document.getElementById("start_date");
+				const endDateField = document.getElementById("end_date");
+				startDateField.value = getToday();
+				endDateField.value = getTomorrow();
+
+				fetchUsers(); // Fetch user options for the dropdown
+				setTimeout(() => fetchAttendance(1), 100); // Ensure WebSocket connection is ready
+			};
+		</script>
+	</head>
+	<body>
+		<div class="container">
+			<h1>Attendance Records</h1>
+			<div class="filters">
+				<div>
+					<label for="start_date">Start Date:</label>
+					<input type="date" id="start_date" />
+					<label for="end_date">End Date:</label>
+					<input type="date" id="end_date" />
+					<label for="user_name">User:</label>
+					<select id="user_name">
+						<option value="">All Users</option>
+					</select>
+				</div>
+				<button onclick="fetchAttendance(1)">View Attendance</button>
+			</div>
+			<div class="last-refreshed" id="last_refreshed">
+				Last Refreshed: Not yet refreshed
+			</div>
+			<div class="table-container">
+				<table>
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Timestamp</th>
+							<th>Type</th>
+						</tr>
+					</thead>
+					<tbody id="attendance_table">
+						<tr>
+							<td colspan="3">No records found.</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<div class="pagination">
+				<div class="pagination-controls">
+					<button
+						id="prev_page"
+						onclick="fetchAttendance(currentPage - 1)"
+						disabled>
+						Previous
+					</button>
+					<input
+						id="jump_page"
+						type="number"
+						min="1"
+						placeholder="Page #"
+						onkeypress="handleJump(event)" />
+					<button
+						id="next_page"
+						onclick="fetchAttendance(currentPage + 1)"
+						disabled>
+						Next
+					</button>
+				</div>
+				<div class="pagination-info" id="pagination_info"></div>
+			</div>
+		</div>
+	</body>
+</html>
