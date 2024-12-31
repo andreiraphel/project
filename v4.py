@@ -2,10 +2,11 @@ import customtkinter as ctk
 import adafruit_fingerprint
 import serial
 import time
-from PIL import ImageTk, Image
+#from PIL import ImageTk, Image
 import sqlite3
+import threading
 
-uart = serial.Serial("/dev/ttyS0", baudrate=57600, timeout=1)
+uart = serial.Serial("/dev/ttyS1", baudrate=57600, timeout=1)
 finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
 
 class App(ctk.CTk):
@@ -15,6 +16,10 @@ class App(ctk.CTk):
         self.title("Dao Attendance System")
         self.geometry("800x480")
         self.resizable(False, False)
+        self.attributes("-fullscreen", True)
+        self.config(cursor="none")
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
 
         self.start_font_size = 100
         self.font_size = self.start_font_size
@@ -22,9 +27,9 @@ class App(ctk.CTk):
         self.opacity = self.start_opacity
 
 
-        self.img1 = ctk.CTkImage(light_image=Image.open("C:\\Users\\andre\\project\\background\\pattern1.jpg"),
-                                  dark_image=Image.open("C:\\Users\\andre\\project\\background\\pattern1.jpg"),
-                                  size=(800, 480))
+        #self.img1 = ctk.CTkImage(light_image=Image.open("C:\\Users\\andre\\project\\background\\pattern1.jpg"),
+        #                          dark_image=Image.open("C:\\Users\\andre\\project\\background\\pattern1.jpg"),
+        #                          size=(800, 480))
 
         self.time_label = ctk.CTkLabel(self, font=("Arial", 20, "bold"), fg_color="transparent")
         self.time_label.place(relx=0.98, rely=0.02, anchor='ne')
@@ -81,22 +86,20 @@ class TitleFrame(ctk.CTkFrame):
         color = f"#{intensity:02X}{intensity:02X}{intensity:02X}"
         self.title_label.configure(text_color=color)
 
+
 class LoginFrame(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master)
-
-        # GET ADMINS QUERY
-        db = Database()
-        self.admins = [row[0] for row in db.fetch_all("SELECT pin FROM users WHERE user_type = 'admin'")]
-        db.close()
-        self.is_admin = None
-
         self.configure(fg_color="transparent")
 
-        self.pin_entry = ctk.CTkEntry(self, font=("Figtree", 50, "bold"), width=320, justify='center', show='*', fg_color="transparent")
+        self.pin_entry = ctk.CTkEntry(
+            self, font=("Figtree", 50, "bold"), width=320, justify='center', show='*', fg_color="transparent"
+        )
         self.pin_entry.grid(row=0, column=0, columnspan=3, pady=(0, 10))
         self.create_keypad()
 
+        # Thread control
+        self.stop_fingerprint_thread = threading.Event()
         self.fingerprint_thread = threading.Thread(target=self.scan_fingerprint_thread, daemon=True)
         self.fingerprint_thread.start()
 
@@ -113,37 +116,18 @@ class LoginFrame(ctk.CTkFrame):
         ]
 
         for i, key in enumerate(keypad):
-            if key == "DELETE":
-                button = ctk.CTkButton(
-                    keypad_frame, 
-                    text=key, 
-                    font=("Figtree", 30, "bold"), 
-                    fg_color="#c0392b",
-                    text_color="#000000",
-                    command=lambda k=key: self.append_pin(k)
-                )
-            elif key == "ENTER":
-                button = ctk.CTkButton(
-                    keypad_frame, 
-                    text=key, 
-                    font=("Figtree", 30, "bold"), 
-                    fg_color="#009432",
-                    text_color="#000000",
-                    command=lambda k=key: self.append_pin(k)
-                )
-            else:
-                button = ctk.CTkButton(
-                    keypad_frame, 
-                    text=key, 
-                    font=("Figtree", 30, "bold"), 
-                    fg_color="#95a5a6",
-                    text_color="#000000",
-                    command=lambda k=key: self.append_pin(k)
-                )
+            button = ctk.CTkButton(
+                keypad_frame,
+                text=key,
+                font=("Figtree", 30, "bold"),
+                fg_color=("#c0392b" if key == "DELETE" else "#009432" if key == "ENTER" else "#95a5a6"),
+                text_color="#000000",
+                command=lambda k=key: self.append_pin(k)
+            )
             button.grid(row=i // 3, column=i % 3, padx=5, pady=5, ipadx=10, ipady=5)
             if key == "ENTER":
                 self.enter_button = button
-                self.enter_button.configure(state="disabled")  # Disable enter button initially
+                self.enter_button.configure(state="disabled")  # Disable initially
 
     def append_pin(self, value):
         current_pin = self.pin_entry.get()
@@ -155,78 +139,98 @@ class LoginFrame(ctk.CTkFrame):
             if len(current_pin) < 6:
                 self.pin_entry.insert('end', value)
 
-        # Enable or disable the enter button based on the pin length
-        if len(self.pin_entry.get()) == 6:
-            self.enter_button.configure(state="normal")
-        else:
-            self.enter_button.configure(state="disabled")
+        # Enable or disable the enter button based on pin length
+        self.enter_button.configure(state="normal" if len(self.pin_entry.get()) == 6 else "disabled")
 
     def enter(self):
-        self.check_admin()
-        if self.is_admin:
-            self.master.title_frame.title_label.configure(text="Admin logged in", font=("Figtree", 24, "bold"))
-            self.place_forget()
-            self.pin_entry.delete(0, 'end')
-            AdminFrame(self.master)
-        else:
-            self.master.title_frame.title_label.configure(text="Welcome", font=("Figtree", 24, "bold"))
-            self.place_forget()
-            self.pin_entry.delete(0, 'end')
-            UserFrame(self.master)
-
-    def check_admin(self):
+        self.stop_fingerprint_thread.set()
+        self.fingerprint_thread.join()
         pin = self.pin_entry.get()
-        if int(pin) in self.admins:
-            self.is_admin = True
-        else:
-            self.is_admin = False
+        db = Database()
 
-    def scan_fingerprint_thread(self):
-        """Continuously check for fingerprints in a separate thread."""
-        while True:
-            fingerprint_id = self.get_fingerprint()
-            if fingerprint_id is not None:
-                # Fingerprint detected, process it on the main thread
-                self.master.after(0, self.process_fingerprint, fingerprint_id)
+        try:
+            user = db.fetch_one("SELECT id, first_name, last_name, user_type FROM users WHERE pin = ?", (pin,))
+        except Exception as e:
+            self.master.title_frame.title_label.configure(text="Database Error.", font=("Figtree", 24, "bold"))
+            print(f"Error: {e}")
+            return
+        finally:
+            db.close()
 
-    def get_fingerprint(self):
-        """Scan for a fingerprint and return the ID."""
-        if finger.get_image() == adafruit_fingerprint.OK:
-            if finger.image_2_tz(1) == adafruit_fingerprint.OK:
-                if finger.finger_search() == adafruit_fingerprint.OK:
-                    return finger.finger_id
-        return None
-
-    def process_fingerprint(self, fingerprint_id):
-        """Process a detected fingerprint."""
-        user_details = self.get_user_by_fingerprint(fingerprint_id)
-        if user_details:
-            full_name = f"{user_details['first_name']} {user_details['last_name']}"
-            if user_details["user_type"] == "admin":
-                self.is_admin = True
+        if user:
+            user_id, first_name, last_name, user_type = user
+            full_name = f"{first_name} {last_name}"
+            if user_type == "admin":
                 self.master.title_frame.title_label.configure(
                     text=f"Admin {full_name} logged in", font=("Figtree", 24, "bold")
                 )
                 self.place_forget()
-                AdminFrame(self.master)
+                self.pin_entry.delete(0, 'end')
+                AdminFrame(self.master, user_id)
             else:
-                self.is_admin = False
                 self.master.title_frame.title_label.configure(
                     text=f"Welcome {full_name}!", font=("Figtree", 24, "bold")
                 )
                 self.place_forget()
-                UserFrame(self.master)
+                self.pin_entry.delete(0, 'end')
+                UserFrame(self.master, user_id)
+        else:
+            self.master.title_frame.title_label.configure(
+                text="Invalid PIN. Try again.", font=("Figtree", 24, "bold")
+            )
+            self.pin_entry.delete(0, 'end')
+
+    def scan_fingerprint_thread(self):
+        while not self.stop_fingerprint_thread.is_set():
+            fingerprint_id = self.get_fingerprint()
+            if fingerprint_id is not None:
+                self.master.after(0, self.process_fingerprint, fingerprint_id)
+
+    def get_fingerprint(self):
+        try:
+            if finger.get_image() == adafruit_fingerprint.OK:
+                if finger.image_2_tz(1) == adafruit_fingerprint.OK:
+                    if finger.finger_search() == adafruit_fingerprint.OK:
+                        return finger.finger_id
+        except Exception as e:
+            print(f"Fingerprint error: {e}")
+        return None
+
+    def process_fingerprint(self, fingerprint_id):
+
+        self.stop_fingerprint_thread.set()
+        self.fingerprint_thread.join()
+
+        user_details = self.get_user_by_fingerprint(fingerprint_id)
+        if user_details:
+            full_name = f"{user_details['first_name']} {user_details['last_name']}"
+            if user_details["user_type"] == "admin":
+                self.master.title_frame.title_label.configure(
+                    text=f"Admin {full_name} logged in", font=("Figtree", 24, "bold")
+                )
+                self.place_forget()
+                AdminFrame(self.master, user_details["id"])
+            else:
+                self.master.title_frame.title_label.configure(
+                    text=f"Welcome {full_name}!", font=("Figtree", 24, "bold")
+                )
+                self.place_forget()
+                UserFrame(self.master, user_details["id"])
         else:
             self.master.title_frame.title_label.configure(
                 text="Fingerprint not recognized. Try again.", font=("Figtree", 24, "bold")
             )
 
-
     def get_user_by_fingerprint(self, fingerprint_id):
-        """Query the database for user details by fingerprint ID."""
         db = Database()
-        user = db.fetch_one("SELECT * FROM users WHERE finger_id = ?", (fingerprint_id,))
-        db.close()
+        try:
+            user = db.fetch_one("SELECT * FROM users WHERE finger_id = ?", (fingerprint_id,))
+        except Exception as e:
+            print(f"Error fetching user by fingerprint: {e}")
+            return None
+        finally:
+            db.close()
+
         if user:
             return {
                 "id": user[0],
@@ -240,22 +244,23 @@ class LoginFrame(ctk.CTkFrame):
 
 
 class AdminFrame(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, user_id):
         super().__init__(master)
+        self.user_id = user_id  # Store the current user's ID
         self.configure(fg_color="transparent")
         self.create_buttons()
         self.place(relx=0.5, rely=0.55, anchor='center')
-        
+
     def create_buttons(self):
         self.rowconfigure(0, weight=1)
 
         buttons = [
-            ("Time In", self.time_in),
-            ("Time Out", self.time_out),
+            ("Time In", lambda: self.handle_time_action("time-in")),
+            ("Time Out", lambda: self.handle_time_action("time-out")),
             ("Log Out", self.log_out),
-            ("Admin\nOptions", self.admin_options)
+            ("Admin\nOptions", self.admin_options),
         ]
-    
+
         for i, (text, command) in enumerate(buttons):
             button = ctk.CTkButton(
                 self,
@@ -264,34 +269,98 @@ class AdminFrame(ctk.CTkFrame):
                 fg_color="#3498db",
                 command=command,
                 height=150,
-                width=150, 
+                width=150,
                 corner_radius=10,
             )
             button.grid(row=i // 2, column=i % 2, padx=10, pady=10, ipadx=20, ipady=5)
-    
-    def time_in(self):
-        current_time = time.strftime("%Y-%m-%d %I:%M %p")
-        self.master.title_frame.title_label.configure(text=f"Thank you! Timed in at: \n{current_time}", font=("Figtree", 50, "bold"))
-        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')  
-        self.place_forget()     
-        self.after(3000, self.log_out)
 
-    def time_out(self):
-        current_time = time.strftime("%Y-%m-%d %I:%M %p")
-        self.master.title_frame.title_label.configure(text=f"Thank you! Timed out at: \n{current_time}", font=("Figtree", 50, "bold"))
-        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')  
-        self.place_forget()     
-        self.after(3000, self.log_out)
+    def handle_time_action(self, action):
+        """Handles time-in and time-out actions with interval enforcement."""
+        db = Database()
+        cursor = db.connection.cursor()
+
+        # Check the last attendance record for this user
+        last_record =  cursor.execute(
+            """
+            SELECT timestamp, type FROM attendance
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (self.user_id,),
+        )
+        #last_record = cursor.fetchone()
+        current_time = datetime.now()
+
+        # Enforce interval if there is a previous record
+        if last_record:
+            last_timestamp = datetime.fromisoformat(last_record[0])
+            last_action = last_record[1]
+            time_diff = (current_time - last_timestamp).total_seconds() / 60  # In minutes
+
+            if last_action == action:
+                self.master.title_frame.title_label.configure(
+                    text=f"You already performed {action.replace('-', ' ')}.\nPlease wait before retrying.",
+                    font=("Figtree", 24, "bold"),
+                )
+                db.close()
+                return
+            elif time_diff < 5:  # Minimum interval of 5 minutes
+                self.master.title_frame.title_label.configure(
+                    text=f"Too soon to {action.replace('-', ' ')} again.\nPlease wait {5 - int(time_diff)} minutes.",
+                    font=("Figtree", 24, "bold"),
+                )
+                db.close()
+                return
+
+        # Insert the new attendance record
+        cursor.execute(
+            """
+            INSERT INTO attendance (user_id, timestamp, type)
+            VALUES (?, ?, ?)
+            """,
+            (self.user_id, current_time, action),
+        )
+        db.connection.commit()
+        db.close()
+
+        # Update the title to indicate success
+        action_text = "Timed in at" if action == "time-in" else "Timed out at"
+        self.master.title_frame.title_label.configure(
+            text=f"Thank you! {action_text}: \n{current_time.strftime('%Y-%m-%d %I:%M %p')}",
+            font=("Figtree", 50, "bold"),
+        )
+        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')
+        self.place_forget()
+        self.after(3000, self.log_out)  # Automatically log out after 3 seconds
 
     def log_out(self):
-        self.master.title_frame.title_label.configure(text="Please ENTER PIN or\nuse FINGERPRINT to login:", font=("Figtree", 24, "bold"))
+        """Logs out the admin and returns to the login frame."""
+        self.master.title_frame.title_label.configure(
+            text="Please ENTER PIN or\nuse FINGERPRINT to login:", font=("Figtree", 24, "bold")
+        )
         self.master.login_frame.place(relx=0.5, rely=0.57, anchor='center')
         self.master.title_frame.place(relx=0.5, rely=0.1, anchor='center')
         self.place_forget()
 
+        # Restart fingerprint scanning thread
+        self.master.login_frame.stop_fingerprint_thread.clear()  # Reset the stop event
+        self.master.login_frame.fingerprint_thread = threading.Thread(
+            target=self.master.login_frame.scan_fingerprint_thread, daemon=True
+        )
+        self.master.login_frame.fingerprint_thread.start()
+
+
     def admin_options(self):
-        self.place_forget()
-        AdminOptions(self.master)
+        """Navigates to the admin options frame."""
+        try:
+            self.place_forget()
+            AdminOptions(self.master)  # Ensure AdminOptions is properly initialized
+        except Exception as e:
+            self.master.title_frame.title_label.configure(
+                text="Error opening Admin Options.", font=("Figtree", 24, "bold")
+            )
+            print(f"AdminOptions Error: {e}")
 
 class AdminOptions(ctk.CTkFrame):
     def __init__(self, master):
@@ -328,7 +397,9 @@ class AdminOptions(ctk.CTkFrame):
         EnrollFrame(self.master)
 
     def delete(self):
-        print("Delete")
+        self.master.title_frame.title_label.configure(text="Delete User", font=("Figtree", 24, "bold"))
+        self.place_forget()
+        DeleteUserFrame(self.master)
 
     def back(self):
         self.place_forget()
@@ -345,8 +416,8 @@ class UserFrame(ctk.CTkFrame):
         self.rowconfigure(0, weight=1)
 
         buttons = [
-            ("Time In", self.time_in),
-            ("Time Out", self.time_out),
+            ("Time In", lambda: self.handle_time_action("time-in")),
+            ("Time Out", lambda: self.handle_time_action("time-out")),
             ("Log Out", self.log_out),
         ]
     
@@ -363,25 +434,82 @@ class UserFrame(ctk.CTkFrame):
             )
             button.grid(row=0, column=i, padx=10, pady=10, ipadx=20, ipady=5)
     
-    def time_in(self):
-        current_time = time.strftime("%Y-%m-%d %I:%M %p")
-        self.master.title_frame.title_label.configure(text=f"Thank you! Timed in at: \n{current_time}", font=("Figtree", 50, "bold"))
-        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')  
-        self.place_forget()     
-        self.after(3000, self.log_out)
+    def handle_time_action(self, action):
+        """Handles time-in and time-out actions with interval enforcement."""
+        db = Database()
+        cursor = db.connection.cursor()
 
-    def time_out(self):
-        current_time = time.strftime("%Y-%m-%d %I:%M %p")
-        self.master.title_frame.title_label.configure(text=f"Thank you! Timed out at: \n{current_time}", font=("Figtree", 50, "bold"))
-        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')  
-        self.place_forget()     
-        self.after(3000, self.log_out)
+        # Check the last attendance record for this user
+        cursor.execute(
+            """
+            SELECT timestamp, type FROM attendance
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (self.user_id,),
+        )
+        last_record = cursor.fetchone()
+        current_time = datetime.now()
+
+        # Enforce interval if there is a previous record
+        if last_record:
+            last_timestamp = datetime.fromisoformat(last_record[0])
+            last_action = last_record[1]
+            time_diff = (current_time - last_timestamp).total_seconds() / 60  # In minutes
+
+            if last_action == action:
+                self.master.title_frame.title_label.configure(
+                    text=f"You already performed {action.replace('-', ' ')}.\nPlease wait before retrying.",
+                    font=("Figtree", 24, "bold"),
+                )
+                db.close()
+                return
+            elif time_diff < 5:  # Minimum interval of 5 minutes
+                self.master.title_frame.title_label.configure(
+                    text=f"Too soon to {action.replace('-', ' ')} again.\nPlease wait {5 - int(time_diff)} minutes.",
+                    font=("Figtree", 24, "bold"),
+                )
+                db.close()
+                return
+
+        # Insert the new attendance record
+        cursor.execute(
+            """
+            INSERT INTO attendance (user_id, timestamp, type)
+            VALUES (?, ?, ?)
+            """,
+            (self.user_id, current_time, action),
+        )
+        db.connection.commit()
+        db.close()
+
+        # Update the title to indicate success
+        action_text = "Timed in at" if action == "time-in" else "Timed out at"
+        self.master.title_frame.title_label.configure(
+            text=f"Thank you! {action_text}: \n{current_time.strftime('%Y-%m-%d %I:%M %p')}",
+            font=("Figtree", 50, "bold"),
+        )
+        self.master.title_frame.place(relx=0.5, rely=0.5, anchor='center')
+        self.place_forget()
+        self.after(3000, self.log_out)  # Automatically log out after 3 seconds
 
     def log_out(self):
-        self.master.title_frame.title_label.configure(text="Please ENTER PIN or\nuse FINGERPRINT to login:", font=("Figtree", 24, "bold"))
+        """Logs out the admin and returns to the login frame."""
+        self.master.title_frame.title_label.configure(
+            text="Please ENTER PIN or\nuse FINGERPRINT to login:", font=("Figtree", 24, "bold")
+        )
         self.master.login_frame.place(relx=0.5, rely=0.57, anchor='center')
         self.master.title_frame.place(relx=0.5, rely=0.1, anchor='center')
         self.place_forget()
+
+        # Restart fingerprint scanning thread
+        self.master.login_frame.stop_fingerprint_thread.clear()  # Reset the stop event
+        self.master.login_frame.fingerprint_thread = threading.Thread(
+            target=self.master.login_frame.scan_fingerprint_thread, daemon=True
+        )
+        self.master.login_frame.fingerprint_thread.start()
+
 
 class EnrollFrame(ctk.CTkFrame):
     def __init__(self, master):
@@ -612,34 +740,43 @@ class DeleteUserFrame(ctk.CTkFrame):
         self.create_widgets()
         self.place(relx=0.5, rely=0.55, anchor='center')
 
-        def create_widgets(self):
-            self.label = ctk.CTkLabel(self, text="Enter User ID to Delete:", font=("Figtree", 24, "bold"))
-            self.label.grid(row=0, column=0, pady=10, padx=10)
+    def create_widgets(self):
+        self.label = ctk.CTkLabel(self, text="Enter User ID to Delete:", font=("Figtree", 24, "bold"))
+        self.label.grid(row=0, column=0, pady=10, padx=10)
 
-            self.user_id_entry = ctk.CTkEntry(self, width=300, height=50, fg_color="transparent")
-            self.user_id_entry.grid(row=1, column=0, pady=10, padx=10)
+        self.user_id_entry = ctk.CTkEntry(self, width=300, height=50, fg_color="transparent")
+        self.user_id_entry.grid(row=1, column=0, pady=10, padx=10)
 
-            self.delete_button = ctk.CTkButton(self, text="Delete", command=self.delete_user)
-            self.delete_button.grid(row=2, column=0, pady=10, padx=10)
+        self.delete_button = ctk.CTkButton(self, text="Delete", command=self.delete_user)
+        self.delete_button.grid(row=2, column=0, pady=10, padx=10)
 
-            self.back_button = ctk.CTkButton(self, text="Back", command=self.back)
-            self.back_button.grid(row=3, column=0, pady=10, padx=10)
+        self.back_button = ctk.CTkButton(self, text="Back", command=self.back)
+        self.back_button.grid(row=3, column=0, pady=10, padx=10)
 
-        def delete_user(self):
-            user_id = self.user_id_entry.get()
-            if user_id:
-                db = Database()
-                db.execute_query("DELETE FROM users WHERE id = ?", (user_id,))
-                db.close()
-                self.master.title_frame.title_label.configure(text="User deleted successfully.", font=("Figtree", 24, "bold"))
-                self.place_forget()
-                self.after(3000, AdminFrame(self.master))
+    def delete_user(self):
+        user_id = self.user_id_entry.get()
+        if user_id:
+            db = Database()
+            user = db.fetch_one("SELECT finger_id FROM users WHERE id = ?", (user_id,))
+            if user:
+                finger_id = user[0]
+                if finger.delete_model(finger_id) == adafruit_fingerprint.OK:
+                    db.execute_query("DELETE FROM users WHERE id = ?", (user_id,))
+                    self.master.title_frame.title_label.configure(text="User and fingerprint deleted successfully.", font=("Figtree", 24, "bold"))
+                else:
+                    self.master.title_frame.title_label.configure(text="Failed to delete fingerprint from sensor.", font=("Figtree", 24, "bold"))
             else:
-                self.master.title_frame.title_label.configure(text="Please enter a valid User ID.", font=("Figtree", 24, "bold"))
-
-        def back(self):
+                self.master.title_frame.title_label.configure(text="User ID not found.", font=("Figtree", 24, "bold"))
+            db.close()
             self.place_forget()
-            AdminOptions(self.master)
+            self.after(3000, AdminFrame(self.master))
+        else:
+            self.master.title_frame.title_label.configure(text="Please enter a valid User ID.", font=("Figtree", 24, "bold"))
+            self.user_id_entry.delete(0, 'end')
+
+    def back(self):
+        self.place_forget()
+        AdminOptions(self.master)
 
 class Database:
     def __init__(self, db_name="attendance.db"):
