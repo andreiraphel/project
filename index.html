@@ -124,6 +124,20 @@
 				background: #ccc;
 				cursor: not-allowed;
 			}
+			.download-btn button {
+				background-color: #28a745;
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				margin-left: 10px;
+				border-radius: 5px;
+				cursor: pointer;
+			}
+
+			.download-btn button:hover {
+				background-color: #218838;
+			}
+
 		</style>
 		<script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
 		<script>
@@ -282,7 +296,22 @@
 						<option value="">All Users</option>
 					</select>
 				</div>
-				<button onclick="fetchAttendance(1)">View Attendance</button>
+				<div class="filters">
+					<div>
+						<label for="start_date">Start Date:</label>
+						<input type="date" id="start_date" />
+						<label for="end_date">End Date:</label>
+						<input type="date" id="end_date" />
+						<label for="user_name">User:</label>
+						<select id="user_name">
+							<option value="">All Users</option>
+						</select>
+					</div>
+					<button onclick="fetchAttendance(1)">View Attendance</button>
+					<a href="/download_csv" class="download-btn" download>
+						<button>Download Database as CSV</button>
+					</a>
+				</div>
 			</div>
 			<div class="last-refreshed" id="last_refreshed">
 				Last Refreshed: Not yet refreshed

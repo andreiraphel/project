@@ -1,7 +1,8 @@
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from flask_socketio import SocketIO, emit
 import sqlite3
+import csv
 
 # Flask app
 app = Flask(__name__)
@@ -24,6 +25,33 @@ def get_users():
     users = cursor.fetchall()
     conn.close()
     return jsonify([dict(user) for user in users])
+
+@app.route('/download_csv', methods=['GET'])
+def download_csv():
+    """Generate a CSV file from the attendance database and return it."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+        SELECT users.name AS user_name, attendance.timestamp, attendance.type
+        FROM attendance
+        JOIN users ON attendance.user_id = users.id
+        ORDER BY attendance.timestamp ASC
+    """
+    cursor.execute(query)
+    records = cursor.fetchall()
+    conn.close()
+
+    # Generate the CSV
+    def generate():
+        yield "Name,Timestamp,Type\n"  # CSV Header
+        for record in records:
+            yield f"{record['user_name']},{record['timestamp']},{record['type']}\n"
+
+    # Stream the CSV to the client
+    response = Response(generate(), mimetype='text/csv')
+    response.headers.set("Content-Disposition", "attachment", filename="attendance_records.csv")
+    return response
 
 @socketio.on('fetch_attendance')
 def handle_fetch_attendance(data):
@@ -93,4 +121,4 @@ def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000 debug=True)
