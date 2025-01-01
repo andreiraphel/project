@@ -176,25 +176,37 @@
 					);
 			}
 
+			let pauseUpdates = false;
+
 			function fetchAttendance(page = 1) {
+				pauseUpdates = true; // Pause updates during filtering
 				const startDate = document.getElementById("start_date").value;
 				const endDate = document.getElementById("end_date").value;
 				const userName = document.getElementById("user_name").value;
 
-				// Emit a WebSocket request to fetch attendance
 				socket.emit("fetch_attendance", {
 					start_date: startDate,
 					end_date: endDate,
-					user_name: userName || null, // Send null if no user is selected
+					user_name: userName || null,
 					page,
 					per_page: perPage,
 				});
+
+				// Resume updates after a brief delay
+				setTimeout(() => {
+					pauseUpdates = false;
+				}, 2000);
 			}
+
+			socket.on("attendance_update", (data) => {
+				if (pauseUpdates) return; // Skip updates when paused
+				// Existing table update logic
+			});
+
 
 			// Listen for attendance data updates from the server
 			socket.on("attendance_update", (data) => {
 				const tableBody = document.getElementById("attendance_table");
-				tableBody.innerHTML = "";
 
 				if (!data.data || data.data.length === 0) {
 					tableBody.innerHTML =
@@ -202,6 +214,24 @@
 					updatePaginationControls(data.page || 1, perPage, 0);
 					return;
 				}
+
+				const existingRows = Array.from(tableBody.rows).map(row => ({
+					name: row.cells[0].textContent,
+					timestamp: row.cells[1].textContent,
+					type: row.cells[2].textContent,
+				}));
+
+				const newRows = data.data.map(record => ({
+					name: `${record.first_name} ${record.last_name}`,
+					timestamp: formatTimestamp(record.timestamp),
+					type: record.type,
+				}));
+
+				if (JSON.stringify(existingRows) === JSON.stringify(newRows)) {
+					return; // Skip updates if data hasn't changed
+				}
+
+				tableBody.innerHTML = ""; // Clear only when there's a change
 
 				data.data.forEach((record) => {
 					const rowClass =
@@ -214,14 +244,11 @@
 					tableBody.innerHTML += row;
 				});
 
-				// Update the last refreshed time and pagination controls
+				// Update pagination and last refreshed
 				updateLastRefreshed(data.last_refreshed);
-				updatePaginationControls(
-					data.page,
-					data.per_page,
-					data.total_records
-				);
+				updatePaginationControls(data.page, data.per_page, data.total_records);
 			});
+
 
 			function formatTimestamp(timestamp) {
 				const options = {
@@ -259,16 +286,15 @@
 
 			function handleJump(event) {
 				if (event.key === "Enter") {
-					const jumpPage = parseInt(
-						document.getElementById("jump_page").value
-					);
+					const jumpPage = parseInt(document.getElementById("jump_page").value);
 					if (jumpPage >= 1 && jumpPage <= totalPages) {
 						fetchAttendance(jumpPage);
 					} else {
-						alert("Invalid page number.");
+						alert(`Please enter a valid page number (1-${totalPages}).`);
 					}
 				}
 			}
+
 
 			// Set default dates and fetch initial data
 			window.onload = () => {
