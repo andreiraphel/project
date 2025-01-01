@@ -296,22 +296,10 @@
 						<option value="">All Users</option>
 					</select>
 				</div>
-				<div class="filters">
-					<div>
-						<label for="start_date">Start Date:</label>
-						<input type="date" id="start_date" />
-						<label for="end_date">End Date:</label>
-						<input type="date" id="end_date" />
-						<label for="user_name">User:</label>
-						<select id="user_name">
-							<option value="">All Users</option>
-						</select>
-					</div>
-					<button onclick="fetchAttendance(1)">View Attendance</button>
-					<a href="/download_csv" class="download-btn" download>
-						<button>Download Database as CSV</button>
-					</a>
-				</div>
+				<button onclick="fetchAttendance(1)">View Attendance</button>
+				<a href="/download_csv" class="download-btn" download>
+					<button>Download Database as CSV</button>
+				</a>
 			</div>
 			<div class="last-refreshed" id="last_refreshed">
 				Last Refreshed: Not yet refreshed
